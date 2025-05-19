@@ -16,7 +16,7 @@ namespace PugKit\Builder {
     interface ApplicationInterface
     {
         public static function concreate(): self;
-        public function useRouterCore(ContinerIneterface $container): RouterInterface;
+        public function useRouterCore(): RouterInterface;
     }
 
     /**
@@ -25,26 +25,25 @@ namespace PugKit\Builder {
     class Application implements ApplicationInterface
     {
         private static RouterInterface $router;
-        private static ContinerIneterface $continer;
+        private static ContinerIneterface $container;
 
         private function __construct() {}
 
         public static function concreate(): self
         {
             self::$router = new RouterCore();
-            self::$continer = new Contianer();
+            self::$container = new Contianer();
             return new self;
         }
 
-        public function useRouterCore(ContinerIneterface $container): RouterInterface
+        public function useRouterCore(): RouterInterface
         {
-            self::$router->setContainer($container);
             return self::$router;
         }
 
         public function useContianer(): ContinerIneterface
         {
-            return self::$continer;
+            return self::$container;
         }
     }
 }
@@ -57,6 +56,13 @@ namespace PugKit\BackendEnums {
         public const Post = "POST";
         public const Put = "PUT";
         public const Delete = "DELETE";
+        public const CodeNotFound = 404;
+        public const MethodNotAllowed = 405;
+    }
+
+    class ErrCode
+    {
+        public const APP  = 500;
     }
 }
 
@@ -64,13 +70,15 @@ namespace PugKit\Router {
 
     use Closure;
     use Exception;
+    use PugKit\BackendEnums\ErrCode;
     use PugKit\BackendEnums\Http;
-    use PugKit\DI\ContinerIneterface;
     use PugKit\Response\JsonResponse;
+    use PugKit\Response\ResponseHandler;
+
+    use function PugKit\Helper\dd;
 
     interface RouterInterface
     {
-        public function setContainer(ContinerIneterface $container): void;
         public function group(string $prefix, callable $callback): void;
         public function get(string $pattern, callable|array $handler, array $middlewares = []): void;
         public function post(string $pattern, callable|array $handler, array $middlewares = []): void;
@@ -83,19 +91,8 @@ namespace PugKit\Router {
 
     class RouterCore implements RouteGroupInterface
     {
-        /**
-         * @var array
-         */
-        private $buildingContainer = [];
-
         private array $routes = [];
         private string $prefix = "";
-
-        public function setContainer(ContinerIneterface $container): void
-        {
-            echo "<pre>";
-            print_r($container);
-        }
 
         public function group(string $prefix, callable $callback): void
         {
@@ -104,6 +101,7 @@ namespace PugKit\Router {
             $callback($this);
             $this->prefix = $previousPrefix;
         }
+
         public function get(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Get);
@@ -137,11 +135,11 @@ namespace PugKit\Router {
                         $params = array_combine($route["paramNames"], $matches);
                         $next = function () use ($route, $params) {
                             if (is_array($route["handler"])) {
-                                $this->handlerController($route["handler"], $params);
+                                ResponseHandler::checkIfRespHandlerEchoValue($this->handlerController($route["handler"], $params));
                             }
 
                             if (is_object($route["handler"])) {
-                                call_user_func_array($route["handler"], $params);
+                                ResponseHandler::checkIfRespHandlerEchoValue(call_user_func_array($route["handler"], $params));
                             }
                         };
 
@@ -158,11 +156,12 @@ namespace PugKit\Router {
                     }
                 }
 
-                throw new Exception("404 Not Found", 404);
+                throw new Exception("404 Not Found", Http::CodeNotFound);
             } catch (Exception $e) {
-                http_response_code($e->getCode());
+                header("Content-type: application/json");
+
                 error_log($e->getMessage());
-                echo json_encode(new JsonResponse([], $e->getMessage(), $e->getCode()), JSON_PRETTY_PRINT);
+                echo json_encode(["data"=> null, "message" => $e->getMessage(), "code" => $e->getCode()], JSON_PRETTY_PRINT);
                 exit;
             }
         }
@@ -190,7 +189,7 @@ namespace PugKit\Router {
         private function addMethod(string $method): void
         {
             if ($_SERVER["REQUEST_METHOD"] !== $method) {
-                throw new Exception("Invalid HTTP method. Expected {$method}", 405);
+                throw new Exception("Invalid HTTP method. Expected {$method}", Http::MethodNotAllowed);
             }
         }
 
@@ -199,12 +198,14 @@ namespace PugKit\Router {
             list($controllerClass, $methodName) = $actionHandler;
 
             if (!class_exists($controllerClass)) {
-                throw new Exception("Controller {$controllerClass} not found.");
+                throw new Exception("Controller {$controllerClass} not found.", ErrCode::APP);
             }
 
-            $controller = new $controllerClass(); // constructor ...params
+            global $container;
+
+            $controller = new $controllerClass($container); // constructor ...params
             if (!method_exists($controller, $methodName)) {
-                throw new Exception("Method {$methodName} not found in controller {$controllerClass}.");
+                throw new Exception("Method {$methodName} not found in controller {$controllerClass}.", ErrCode::APP);
             }
 
             $params = count($params) ? $params : [];
@@ -217,6 +218,7 @@ namespace PugKit\Router {
 namespace PugKit\DI {
 
     use Exception;
+    use PugKit\BackendEnums\ErrCode;
 
     use function PugKit\Helper\str_or_object;
 
@@ -262,7 +264,7 @@ namespace PugKit\DI {
         /**
          * @var array
          */
-        private $building = [];
+        public $building = [];
 
         /** 
          * @param string $container
@@ -292,7 +294,7 @@ namespace PugKit\DI {
             if (isset($this->building[$container])) {
                 return ($this->building[$container])();
             }
-            throw new Exception("Container not found: {$container}");
+            throw new Exception("Container not found: {$container}", ErrCode::APP);
         }
 
         /**
@@ -308,9 +310,9 @@ namespace PugKit\DI {
                     $instance = $this->building[$type]()[$interface];
                     return str_or_object($instance);
                 }
-                throw new Exception(ucfirst($type) . " not found: {$interface}");
+                throw new Exception(ucfirst($type) . " not found: {$interface}", ErrCode::APP);
             }
-            throw new Exception("Invalid interface or missing '{$type}' keyword: {$interface}");
+            throw new Exception("Invalid interface or missing '{$type}' keyword: {$interface}", ErrCode::APP);
         }
 
         /**
@@ -439,14 +441,43 @@ namespace PugKit\Response {
             ];
         }
     }
+
+    class ResponseHandler
+    {
+        public static function checkIfRespHandlerEchoValue($type = null)
+        {
+            if ($type instanceof JsonResponse) {
+                header("Content-type: application/json");
+                echo json_encode($type, JSON_PRETTY_PRINT);
+                return;
+            }
+
+            if (is_array($type)) {
+                header("Content-type: application/json");
+                echo json_encode($type, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                return;
+            }
+
+            if (is_object($type)) {
+                header("Content-type: application/json");
+                echo json_encode($type, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                return;
+            }
+
+            header("Content-type: text/plain; charset=utf-8");
+            echo $type;
+        }
+    }
 }
 
 namespace PugKit\Helper {
 
     use InvalidArgumentException;
+    use PugKit\BackendEnums\ErrCode;
     use stdClass;
 
     if (!function_exists("conv_toobj")) {
+
         function conv_toobj(mixed $data): mixed
         {
             if (is_array($data)) {
@@ -517,7 +548,7 @@ namespace PugKit\Helper {
                 if (class_exists($instance)) {
                     return new $instance();
                 } else {
-                    throw new InvalidArgumentException("Class $instance does not exist.");
+                    throw new InvalidArgumentException("Class $instance does not exist.", ErrCode::APP);
                 }
             }
 
@@ -525,7 +556,17 @@ namespace PugKit\Helper {
                 return $instance;
             }
 
-            throw new InvalidArgumentException("Argument must be a string or an object.");
+            throw new InvalidArgumentException("Argument must be a string or an object.", ErrCode::APP);
+        }
+    }
+
+    if (!function_exists("dd")) {
+
+        function dd(mixed $data)
+        {
+            echo "<pre>";
+            print_r($data);
+            exit;
         }
     }
 }
