@@ -8,8 +8,8 @@
 
 namespace PugKit\Builder {
 
-    use PugKit\DI\Contianer;
-    use PugKit\DI\ContinerIneterface;
+    use PugKit\DI\Container;
+    use PugKit\DI\ContainerIneterface;
     use PugKit\Router\RouterInterface;
     use PugKit\Router\RouterCore;
 
@@ -25,14 +25,14 @@ namespace PugKit\Builder {
     class Application implements ApplicationInterface
     {
         private static RouterInterface $router;
-        private static ContinerIneterface $container;
+        private static ContainerIneterface $container;
 
         private function __construct() {}
 
         public static function concreate(): self
         {
             self::$router = new RouterCore();
-            self::$container = new Contianer();
+            self::$container = new Container();
             return new self;
         }
 
@@ -41,7 +41,7 @@ namespace PugKit\Builder {
             return self::$router;
         }
 
-        public function useContianer(): ContinerIneterface
+        public function useContianer(): ContainerIneterface
         {
             return self::$container;
         }
@@ -56,6 +56,10 @@ namespace PugKit\BackendEnums {
         public const Post = "POST";
         public const Put = "PUT";
         public const Delete = "DELETE";
+
+        public const Multipart = "FILES";
+        public const Json = "JSON";
+
         public const CodeNotFound = 404;
         public const MethodNotAllowed = 405;
     }
@@ -72,10 +76,8 @@ namespace PugKit\Router {
     use Exception;
     use PugKit\BackendEnums\ErrCode;
     use PugKit\BackendEnums\Http;
-    use PugKit\Response\JsonResponse;
+    use PugKit\Request\Request;
     use PugKit\Response\ResponseHandler;
-
-    use function PugKit\Helper\dd;
 
     interface RouterInterface
     {
@@ -135,11 +137,11 @@ namespace PugKit\Router {
                         $params = array_combine($route["paramNames"], $matches);
                         $next = function () use ($route, $params) {
                             if (is_array($route["handler"])) {
-                                ResponseHandler::checkIfRespHandlerEchoValue($this->handlerController($route["handler"], $params));
+                                ResponseHandler::IfRespHandlerEchoValue($this->handlerController($route["handler"], $params));
                             }
 
                             if (is_object($route["handler"])) {
-                                ResponseHandler::checkIfRespHandlerEchoValue(call_user_func_array($route["handler"], $params));
+                                ResponseHandler::IfRespHandlerEchoValue($this->handlerFunc($route, $params));
                             }
                         };
 
@@ -161,7 +163,7 @@ namespace PugKit\Router {
                 header("Content-type: application/json");
 
                 error_log($e->getMessage());
-                echo json_encode(["data"=> null, "message" => $e->getMessage(), "code" => $e->getCode()], JSON_PRETTY_PRINT);
+                echo json_encode(["data" => null, "message" => $e->getMessage(), "error_line" => $e->getLine(), "code" => $e->getCode()], JSON_PRETTY_PRINT);
                 exit;
             }
         }
@@ -193,6 +195,11 @@ namespace PugKit\Router {
             }
         }
 
+        private function handlerFunc(array $actionHandler, array $params)
+        {
+            return call_user_func_array($actionHandler["handler"], $params);
+        }
+
         private function handlerController(array $actionHandler, array $params): mixed
         {
             list($controllerClass, $methodName) = $actionHandler;
@@ -202,15 +209,19 @@ namespace PugKit\Router {
             }
 
             global $container;
+            $request = Request::createFromGlobals();
 
-            $controller = new $controllerClass($container); // constructor ...params
+            $constructorArgs = [$container];
+            $controller = new $controllerClass(...$constructorArgs);
+
             if (!method_exists($controller, $methodName)) {
                 throw new Exception("Method {$methodName} not found in controller {$controllerClass}.", ErrCode::APP);
             }
 
             $params = count($params) ? $params : [];
+            $methodArgs = array_merge([$request], $params);
 
-            return call_user_func_array([$controller, $methodName], $params);
+            return call_user_func_array([$controller, $methodName], $methodArgs);
         }
     }
 }
@@ -222,7 +233,7 @@ namespace PugKit\DI {
 
     use function PugKit\Helper\str_or_object;
 
-    interface ContinerIneterface
+    interface ContainerIneterface
     {
         /**
          * @param string $container
@@ -259,7 +270,7 @@ namespace PugKit\DI {
         public function service($interface);
     }
 
-    class Contianer implements ContinerIneterface
+    class Container implements ContainerIneterface
     {
         /**
          * @var array
@@ -415,9 +426,137 @@ namespace PugKit\DotENV {
     }
 }
 
+namespace PugKit\Request {
+
+    use PugKit\BackendEnums\Http;
+
+    interface RequestInterface
+    {
+        public function only(array $defaults): array;
+        public function get(): array;
+        public function post(): array;
+        public function multipart(): array;
+        public function json(): array;
+        public function getData(string $type): array;
+        public function hasData(string $type): bool;
+    }
+
+    class Request implements RequestInterface
+    {
+        private static array $data = [];
+
+        private function __construct() {}
+
+        public static function createFromGlobals(): RequestInterface
+        {
+            static::$data = [
+                "POST"   => static::sanitize($_POST),
+                "GET"    => static::sanitize($_GET),
+                "FILES"  => $_FILES,
+                "JSON"   => static::fromJSON(),
+                "SERVER" => $_SERVER,
+            ];
+
+            return new static();
+        }
+
+        public function only(array $defaults): array
+        {
+            $methods = [];
+            foreach ($defaults as $default) {
+                $default = strtoupper($default);
+                $methods[$default] = !empty(self::$methods[$default]) ? self::$data[$default] : [];
+            }
+
+            return $methods;
+        }
+
+        public function get(): array
+        {
+            return $this->only([Http::Get])[Http::Get];
+        }
+
+        public function post(): array
+        {
+            return $this->only([Http::Post])[Http::Post];
+        }
+
+        public function multipart(): array
+        {
+            return $this->only([Http::Multipart])[Http::Multipart];
+        }
+
+        public function json(): array
+        {
+            return $this->only([Http::Json])[Http::Json];
+        }
+
+        public function getData(string $type): array
+        {
+            $key = strtoupper($type);
+            return static::$data[$key] ?? [];
+        }
+
+        public function hasData(string $type): bool
+        {
+            $key = strtoupper($type);
+            return array_key_exists($key, static::$data) && !empty(static::$data[$key]);
+        }
+
+        private static function fromJSON(): array
+        {
+            $raw = file_get_contents("php://input");
+            $decoded = json_decode($raw, true);
+            return is_array($decoded) ? static::sanitize($decoded) : [];
+        }
+
+        private static function sanitize(array $input): array
+        {
+            return array_map(function ($value) {
+                if (is_array($value)) {
+                    return static::sanitize($value);
+                }
+                return is_string($value) ? htmlspecialchars(trim($value), ENT_QUOTES, "UTF-8") : $value;
+            }, $input);
+        }
+    }
+}
+
 namespace PugKit\Response {
 
     use JsonSerializable;
+
+    class ResponseEnums
+    {
+        // Informational 1xx
+        public const CONTINUE = 100;
+        public const SWITCHING_PROTOCOLS = 101;
+
+        // Successful 2xx
+        public const OK = 200;
+        public const CREATED = 201;
+        public const ACCEPTED = 202;
+        public const NO_CONTENT = 204;
+
+        // Redirection 3xx
+        public const MOVED_PERMANENTLY = 301;
+        public const FOUND = 302;
+        public const NOT_MODIFIED = 304;
+
+        // Client Error 4xx
+        public const BAD_REQUEST = 400;
+        public const UNAUTHORIZED = 401;
+        public const FORBIDDEN = 403;
+        public const NOT_FOUND = 404;
+        public const METHOD_NOT_ALLOWED = 405;
+        public const UNPROCESSABLE_ENTITY = 422;
+
+        // Server Error 5xx
+        public const INTERNAL_SERVER_ERROR = 500;
+        public const NOT_IMPLEMENTED = 501;
+        public const BAD_GATEWAY = 502;
+        public const SERVICE_UNAVAILABLE = 503;
+    }
 
     class JsonResponse implements JsonSerializable
     {
@@ -444,7 +583,7 @@ namespace PugKit\Response {
 
     class ResponseHandler
     {
-        public static function checkIfRespHandlerEchoValue($type = null)
+        public static function IfRespHandlerEchoValue($type = null)
         {
             if ($type instanceof JsonResponse) {
                 header("Content-type: application/json");

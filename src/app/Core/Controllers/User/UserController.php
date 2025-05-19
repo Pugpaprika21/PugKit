@@ -4,19 +4,21 @@ namespace App\Core\Controllers\User;
 
 use App\Core\Controllers\BaseController;
 use PDO;
-use PugKit\DI\ContinerIneterface;
+use PugKit\DI\ContainerIneterface;
+use PugKit\Request\RequestInterface;
 use PugKit\Response\JsonResponse;
+use PugKit\Response\ResponseEnums;
 
 class UserController extends BaseController
 {
-    private ContinerIneterface $container;
+    private ContainerIneterface $container;
 
-    public function __construct(ContinerIneterface $container)
+    public function __construct(ContainerIneterface $container)
     {
         $this->container = $container;
     }
 
-    public function get(string $userId): JsonResponse
+    public function get(RequestInterface $request, string $userId): JsonResponse
     {
         $db = $this->container->get(PDO::class);
 
@@ -27,10 +29,10 @@ class UserController extends BaseController
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        return new JsonResponse($rows, "Success", 200);
+        return new JsonResponse($rows, "Success", ResponseEnums::OK);
     }
 
-    public function getlist(): JsonResponse
+    public function getlist(RequestInterface $request): JsonResponse
     {
         $db = $this->container->get(PDO::class);
 
@@ -40,6 +42,6 @@ class UserController extends BaseController
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        return new JsonResponse($rows, "Success", 200);
+        return new JsonResponse($rows, "Success", ResponseEnums::OK);
     }
 }
