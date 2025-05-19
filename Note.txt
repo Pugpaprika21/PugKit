@@ -1,2 +1,4 @@
 # Run With Localhost -> php -S localhost:9090 -t src/public
 # Run With Docker -> ##
+
+# example route url -> http://localhost:9090/index.php?route=/ -> to HomeController
