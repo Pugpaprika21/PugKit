@@ -19,7 +19,7 @@ $app = Application::concreate();
 
 ################################### Example Contianer ###################################
 
-$container = $app->useContianer();
+$container = $app->useContainer();
 
 $container->set(PDO::class, function () {
     try {

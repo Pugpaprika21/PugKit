@@ -41,7 +41,7 @@ namespace PugKit\Builder {
             return self::$router;
         }
 
-        public function useContianer(): ContainerIneterface
+        public function useContainer(): ContainerIneterface
         {
             return self::$container;
         }
@@ -107,25 +107,25 @@ namespace PugKit\Router {
         public function get(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Get);
-            $this->add($pattern, $handler, $middlewares);
+            $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function post(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Post);
-            $this->add($pattern, $handler, $middlewares);
+            $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function put(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Put);
-            $this->add($pattern, $handler, $middlewares);
+            $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function delete(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Delete);
-            $this->add($pattern, $handler, $middlewares);
+            $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function dispatch(string $uri): void
@@ -137,11 +137,11 @@ namespace PugKit\Router {
                         $params = array_combine($route["paramNames"], $matches);
                         $next = function () use ($route, $params) {
                             if (is_array($route["handler"])) {
-                                ResponseHandler::IfRespHandlerEchoValue($this->handlerController($route["handler"], $params));
+                                ResponseHandler::IfEchoValue($this->handlerController($route["handler"], $params));
                             }
 
                             if (is_object($route["handler"])) {
-                                ResponseHandler::IfRespHandlerEchoValue($this->handlerFunc($route, $params));
+                                ResponseHandler::IfEchoValue($this->handlerFunc($route, $params));
                             }
                         };
 
@@ -178,7 +178,7 @@ namespace PugKit\Router {
             return "#^" . $regex . "$#";
         }
 
-        private function add(string $pattern, callable|array $handler, array $middlewares = []): void
+        private function addRoute(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->routes[] = [
                 "regex" => $this->convertToRegex($this->prefix . $pattern, $paramNames),
@@ -190,9 +190,7 @@ namespace PugKit\Router {
 
         private function addMethod(string $method): void
         {
-            if ($_SERVER["REQUEST_METHOD"] !== $method) {
-                throw new Exception("Invalid HTTP method. Expected {$method}", Http::MethodNotAllowed);
-            }
+            if ($_SERVER["REQUEST_METHOD"] !== $method) throw new Exception("Invalid HTTP method. Expected {$method}", Http::MethodNotAllowed);
         }
 
         private function handlerFunc(array $actionHandler, array $params)
@@ -583,7 +581,7 @@ namespace PugKit\Response {
 
     class ResponseHandler
     {
-        public static function IfRespHandlerEchoValue($type = null)
+        public static function IfEchoValue($type = null)
         {
             if ($type instanceof JsonResponse) {
                 header("Content-type: application/json");
@@ -591,13 +589,7 @@ namespace PugKit\Response {
                 return;
             }
 
-            if (is_array($type)) {
-                header("Content-type: application/json");
-                echo json_encode($type, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-                return;
-            }
-
-            if (is_object($type)) {
+            if (is_array($type) || is_object($type)) {
                 header("Content-type: application/json");
                 echo json_encode($type, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
                 return;
@@ -605,6 +597,59 @@ namespace PugKit\Response {
 
             header("Content-type: text/plain; charset=utf-8");
             echo $type;
+        }
+    }
+}
+
+namespace PugKit\ViewFactory {
+
+    interface ViewInterface
+    {
+        public function setLayoutHeader(string $header): static;
+        public function setLayoutContent(string $content): static;
+        public function setLayoutFooter(string $footer): static;
+        public function with(string $key, mixed $value): static;
+        public function render(): string;
+    }
+
+    class View implements ViewInterface
+    {
+        private string $path;
+        private array $data = [];
+
+        public function __construct(string $path, array $data = [])
+        {
+            $this->path = $path;
+            $this->data = $data;
+        }
+
+        public function setLayoutHeader(string $header): static
+        {
+            return new static($header, $this->data);
+        }
+
+        public function setLayoutContent(string $content): static {
+            return new static($content, $this->data);
+        }
+        
+        public function setLayoutFooter(string $footer): static
+        {
+            return new static($footer, $this->data);
+        }
+
+        public function with(string $key, mixed $value): static
+        {
+            $this->data[$key] = $value;
+            return $this;
+        }
+
+        public function render(): string
+        {
+            extract($this->data);
+
+            ob_start();
+            include_once sprintf("%s/../../views%s", __DIR__, $this->path);
+            return ob_get_clean();
         }
     }
 }

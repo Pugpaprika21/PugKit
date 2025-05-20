@@ -15,7 +15,7 @@ require_once __DIR__ . "/../app/boostrap/framework/Pugkit.php";
 
 $app = Application::concreate();
 
-$container = $app->useContianer();
+$container = $app->useContainer();
 
 $container->set(PDO::class, function () {
     try {
