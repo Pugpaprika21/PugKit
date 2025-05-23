@@ -3,7 +3,7 @@
 /**
  *@PugKit The Mini PHP Framework
  *@create by Pug
- *@create version v0.1
+ *@create version v0.2
  */
 
 namespace PugKit\Builder {
@@ -15,7 +15,14 @@ namespace PugKit\Builder {
 
     interface ApplicationInterface
     {
+        /**
+         * @return self
+         */
         public static function concreate(): self;
+
+        /**
+         * @return RouterInterface
+         */
         public function useRouterCore(): RouterInterface;
     }
 
@@ -41,7 +48,7 @@ namespace PugKit\Builder {
             return self::$router;
         }
 
-        public function useContianer(): ContainerIneterface
+        public function useContainer(): ContainerIneterface
         {
             return self::$container;
         }
@@ -81,11 +88,49 @@ namespace PugKit\Router {
 
     interface RouterInterface
     {
+        /**
+         * @param string $prefix
+         * @param callable $callback
+         * @return void
+         */
         public function group(string $prefix, callable $callback): void;
+
+        /**
+         * @param string $pattern
+         * @param callable|array $handler
+         * @param array $middlewares
+         * @return void
+         */
         public function get(string $pattern, callable|array $handler, array $middlewares = []): void;
+
+        /**
+         * @param string $pattern
+         * @param callable|array $handler
+         * @param array $middlewares
+         * @return void
+         */
         public function post(string $pattern, callable|array $handler, array $middlewares = []): void;
+
+        /**
+         * @param string $pattern
+         * @param callable|array $handler
+         * @param array $middlewares
+         * @return void
+         */
         public function put(string $pattern, callable|array $handler, array $middlewares = []): void;
+
+        /**
+         * @param string $pattern
+         * @param callable|array $handler
+         * @param array $middlewares
+         * @return void
+         */
         public function delete(string $pattern, callable|array $handler, array $middlewares = []): void;
+
+        /**
+         * @param string $uri
+         * @return void
+         */
         public function dispatch(string $uri): void;
     }
 
@@ -107,25 +152,25 @@ namespace PugKit\Router {
         public function get(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Get);
-            $this->add($pattern, $handler, $middlewares);
+            $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function post(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Post);
-            $this->add($pattern, $handler, $middlewares);
+            $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function put(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Put);
-            $this->add($pattern, $handler, $middlewares);
+            $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function delete(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->addMethod(Http::Delete);
-            $this->add($pattern, $handler, $middlewares);
+            $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function dispatch(string $uri): void
@@ -137,11 +182,11 @@ namespace PugKit\Router {
                         $params = array_combine($route["paramNames"], $matches);
                         $next = function () use ($route, $params) {
                             if (is_array($route["handler"])) {
-                                ResponseHandler::IfRespHandlerEchoValue($this->handlerController($route["handler"], $params));
+                                ResponseHandler::IfEchoValue($this->handlerController($route["handler"], $params));
                             }
 
                             if (is_object($route["handler"])) {
-                                ResponseHandler::IfRespHandlerEchoValue($this->handlerFunc($route, $params));
+                                ResponseHandler::IfEchoValue($this->handlerFunc($route, $params));
                             }
                         };
 
@@ -178,7 +223,7 @@ namespace PugKit\Router {
             return "#^" . $regex . "$#";
         }
 
-        private function add(string $pattern, callable|array $handler, array $middlewares = []): void
+        private function addRoute(string $pattern, callable|array $handler, array $middlewares = []): void
         {
             $this->routes[] = [
                 "regex" => $this->convertToRegex($this->prefix . $pattern, $paramNames),
@@ -190,9 +235,7 @@ namespace PugKit\Router {
 
         private function addMethod(string $method): void
         {
-            if ($_SERVER["REQUEST_METHOD"] !== $method) {
-                throw new Exception("Invalid HTTP method. Expected {$method}", Http::MethodNotAllowed);
-            }
+            if ($_SERVER["REQUEST_METHOD"] !== $method) throw new Exception("Invalid HTTP method. Expected {$method}", Http::MethodNotAllowed);
         }
 
         private function handlerFunc(array $actionHandler, array $params)
@@ -583,7 +626,7 @@ namespace PugKit\Response {
 
     class ResponseHandler
     {
-        public static function IfRespHandlerEchoValue($type = null)
+        public static function IfEchoValue($type = null)
         {
             if ($type instanceof JsonResponse) {
                 header("Content-type: application/json");
@@ -591,20 +634,140 @@ namespace PugKit\Response {
                 return;
             }
 
-            if (is_array($type)) {
+            if (is_array($type) || is_object($type)) {
                 header("Content-type: application/json");
                 echo json_encode($type, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
                 return;
             }
 
-            if (is_object($type)) {
-                header("Content-type: application/json");
-                echo json_encode($type, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-                return;
-            }
-
-            header("Content-type: text/plain; charset=utf-8");
+            self::xssHeader();
             echo $type;
+        }
+
+        public static function xssHeader()
+        {
+            header('X-XSS-Protection: 1; mode=block');
+            // header("Content-Security-Policy: default-src 'self'; script-src 'self'");
+        }
+    }
+}
+
+namespace PugKit\ViewFactory {
+
+    use function PugKit\Helper\csrf_web;
+
+    interface ViewInterface
+    {
+        /**
+         * @param string $header
+         * @param mixed $data
+         * @return void
+         */
+        public function layoutHeader(string $header, mixed $data = null): void;
+
+        /**
+         * @param string $header
+         * @param mixed $data
+         * @return void
+         */
+        public function layoutContent(string $content, mixed $data = null): void;
+
+        /**
+         * @param string $header
+         * @param mixed $data
+         * @return void
+         */
+        public function layoutFooter(string $footer, mixed $data = null): void;
+
+        /**
+         * @param string $key
+         * @param mixed $value
+         * @return static
+         */
+        public function with(string $key, mixed $value): static;
+
+        /*
+         * @return string
+         */
+        public function render(): string;
+    }
+
+    class View implements ViewInterface
+    {
+        private array $data = [];
+        private array $layouts = [];
+
+        public string $csrf;
+
+        public function __construct()
+        {
+            $this->csrf = csrf_web();
+        }
+
+        public function layoutHeader(string $header, $data = null): void
+        {
+            $this->layouts["header"] = $header;
+            $this->layouts["header_vars"] = $data;
+        }
+
+        public function layoutContent(string $content, $data = null): void
+        {
+            $this->layouts["content"] = $content;
+            $this->layouts["content_vars"] = $data;
+        }
+        
+        public function layoutFooter(string $footer, $data = null): void
+        {
+            $this->layouts["footer"] = $footer;
+            $this->layouts["footer_vars"] = $data;
+        }
+
+        public function with(string $key, mixed $value): static
+        {
+            $this->data[$key] = $value;
+            return $this;
+        }
+
+        public function render(): string
+        {
+            $escapedData = array_map(function ($value) {
+                return is_string($value) ? htmlspecialchars($value, ENT_QUOTES, "UTF-8") : $value;
+            }, $this->data);
+
+            extract($escapedData);
+
+            ob_start();
+
+            if (isset($this->layouts["header"])) {
+                $headerVars = $this->escapeData($this->layouts["header_vars"] ?? []);
+                extract($headerVars);
+                include_once sprintf("%s/../../views/%s", __DIR__, $this->layouts["header"]);
+            }
+
+            if (isset($this->layouts["content"])) {
+                $contentVars = $this->escapeData($this->layouts["content_vars"] ?? []);
+                extract($contentVars);
+                include_once sprintf("%s/../../views/%s", __DIR__, $this->layouts["content"]);
+            }
+
+            if (isset($this->layouts["footer"])) {
+                $footerVars = $this->escapeData($this->layouts["footer_vars"] ?? []);
+                extract($footerVars);
+                include_once sprintf("%s/../../views/%s", __DIR__, $this->layouts["footer"]);
+            }
+
+            return ob_get_clean();
+        }
+
+        /**
+         * @param array $data
+         * @return array
+         */
+        private function escapeData(array $data): array
+        {
+            return array_map(function ($value) {
+                return is_string($value) ? htmlspecialchars($value, ENT_QUOTES, "UTF-8") : $value;
+            }, $data);
         }
     }
 }
@@ -617,6 +780,10 @@ namespace PugKit\Helper {
 
     if (!function_exists("conv_toobj")) {
 
+        /**
+         * @param mixed $data
+         * @return mixed
+         */
         function conv_toobj(mixed $data): mixed
         {
             if (is_array($data)) {
@@ -638,7 +805,11 @@ namespace PugKit\Helper {
 
     if (!function_exists("context_xss")) {
 
-        function context_xss($input): string
+        /**
+         * @param mixed $input
+         * @return string
+         */
+        function context_xss(mixed $input): string
         {
             $input = trim($input);
             $input = strip_tags($input);
@@ -649,6 +820,11 @@ namespace PugKit\Helper {
 
     if (!function_exists("arr_upr")) {
 
+        /**
+         * @param $input
+         * @param $case
+         * @return array
+         */
         function arr_upr($input, $case = MB_CASE_TITLE): array
         {
             $convToCamel = function ($str) {
@@ -673,6 +849,9 @@ namespace PugKit\Helper {
 
     if (!function_exists("csrf_web")) {
 
+        /*
+         * @return string
+         */
         function csrf_web(): string
         {
             return bin2hex(random_bytes(32));
@@ -681,7 +860,11 @@ namespace PugKit\Helper {
 
     if (!function_exists("str_or_object")) {
 
-        function str_or_object($instance)
+        /**
+         * @param string $instance
+         * @return object|null
+         */
+        function str_or_object(string $instance): ?object
         {
             if (is_string($instance)) {
                 if (class_exists($instance)) {
@@ -701,6 +884,10 @@ namespace PugKit\Helper {
 
     if (!function_exists("dd")) {
 
+        /**
+         * @param mixed $data
+         * @return void
+         */
         function dd(mixed $data)
         {
             echo "<pre>";
