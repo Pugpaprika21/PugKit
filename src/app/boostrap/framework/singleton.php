@@ -169,7 +169,7 @@ namespace PugKit\Singleton {
     use PugKit\RouterCore\Router;
     use PugKit\RouterCore\RouterInterface;
 
-    interface ApplicationInterface
+    interface ApplicationInterface  
     {
         public static function concreate(): ApplicationInterface;
     }
