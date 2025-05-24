@@ -6,140 +6,85 @@
  *@create version v0.2
  */
 
-namespace PugKit\Builder {
+namespace PugKit\Singleton {
 
     use PugKit\DI\Container;
-    use PugKit\DI\ContainerIneterface;
-    use PugKit\Router\RouterInterface;
-    use PugKit\Router\RouterCore;
+    use PugKit\DI\ContainerInterface;
+    use PugKit\RouterCore\Router;
+    use PugKit\RouterCore\RouterInterface;
 
     interface ApplicationInterface
     {
-        /**
-         * @return self
-         */
-        public static function concreate(): self;
-
-        /**
-         * @return RouterInterface
-         */
-        public function useRouterCore(): RouterInterface;
+        public static function concreate(): ApplicationInterface;
     }
 
-    /**
-     * Concreate App Builder classes
-     */
-    class Application implements ApplicationInterface
+    final class Application implements ApplicationInterface, RouterInterface, ContainerInterface
     {
-        private static RouterInterface $router;
-        private static ContainerIneterface $container;
+        use Router;
+        use Container;
 
-        private function __construct() {}
+        private static ?ApplicationInterface $instance = null;
 
-        public static function concreate(): self
+        public static function concreate(): ApplicationInterface
         {
-            self::$router = new RouterCore();
-            self::$container = new Container();
-            return new self;
-        }
-
-        public function useRouterCore(): RouterInterface
-        {
-            return self::$router;
-        }
-
-        public function useContainer(): ContainerIneterface
-        {
-            return self::$container;
+            if (!self::$instance) {
+                self::$instance = new self();
+            }
+            return self::$instance;
         }
     }
 }
 
-namespace PugKit\BackendEnums {
-
-    class Http
-    {
-        public const Get = "GET";
-        public const Post = "POST";
-        public const Put = "PUT";
-        public const Delete = "DELETE";
-
-        public const Multipart = "FILES";
-        public const Json = "JSON";
-
-        public const CodeNotFound = 404;
-        public const MethodNotAllowed = 405;
-    }
-
-    class ErrCode
-    {
-        public const APP  = 500;
-    }
-}
-
-namespace PugKit\Router {
+namespace PugKit\RouterCore {
 
     use Closure;
     use Exception;
-    use PugKit\BackendEnums\ErrCode;
-    use PugKit\BackendEnums\Http;
-    use PugKit\Request\Request;
-    use PugKit\Response\ResponseHandler;
+    use PugKit\Http\Request\Request;
+    use PugKit\Http\Response\BackendEnums\Method;
 
     interface RouterInterface
     {
-        /**
-         * @param string $prefix
-         * @param callable $callback
-         * @return void
-         */
         public function group(string $prefix, callable $callback): void;
-
-        /**
-         * @param string $pattern
-         * @param callable|array $handler
-         * @param array $middlewares
-         * @return void
-         */
         public function get(string $pattern, callable|array $handler, array $middlewares = []): void;
-
-        /**
-         * @param string $pattern
-         * @param callable|array $handler
-         * @param array $middlewares
-         * @return void
-         */
         public function post(string $pattern, callable|array $handler, array $middlewares = []): void;
-
-        /**
-         * @param string $pattern
-         * @param callable|array $handler
-         * @param array $middlewares
-         * @return void
-         */
         public function put(string $pattern, callable|array $handler, array $middlewares = []): void;
-
-        /**
-         * @param string $pattern
-         * @param callable|array $handler
-         * @param array $middlewares
-         * @return void
-         */
         public function delete(string $pattern, callable|array $handler, array $middlewares = []): void;
-
-        /**
-         * @param string $uri
-         * @return void
-         */
         public function dispatch(string $uri): void;
     }
 
-    interface RouteGroupInterface extends RouterInterface {}
-
-    class RouterCore implements RouteGroupInterface
+    trait Router
     {
+        private const CodeNotFound = 404;
+        private const MethodNotAllowed = 405;
+
         private array $routes = [];
         private string $prefix = "";
+
+        private function addRoute(string $pattern, callable|array $handler, array $middlewares = []): void
+        {
+            $this->routes[] = [
+                "regex" => $this->toRegex($this->prefix . $pattern, $paramNames),
+                "paramNames" => $paramNames,
+                "handler" => $handler,
+                "middlewares" => $middlewares,
+            ];
+        }
+
+        private function addMethod(Method $method): void
+        {
+            if ($_SERVER["REQUEST_METHOD"] !== $method->value) throw new Exception("Invalid HTTP method. Expected {$method->value}", self::MethodNotAllowed);
+        }
+
+        private function toRegex(string $pattern, ?array &$paramNames = []): string
+        {
+            $paramNames = [];
+            $regex = preg_replace_callback("#\{(\w+)\}#", function ($matches) use (&$paramNames) {
+                $paramNames[] = $matches[1];
+                return "([^/]+)";
+            }, $pattern);
+
+            return sprintf("#^%s$#", $regex);
+        }
 
         public function group(string $prefix, callable $callback): void
         {
@@ -151,47 +96,61 @@ namespace PugKit\Router {
 
         public function get(string $pattern, callable|array $handler, array $middlewares = []): void
         {
-            $this->addMethod(Http::Get);
+            $this->addMethod(Method::Get);
             $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function post(string $pattern, callable|array $handler, array $middlewares = []): void
         {
-            $this->addMethod(Http::Post);
+            $this->addMethod(Method::Post);
             $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function put(string $pattern, callable|array $handler, array $middlewares = []): void
         {
-            $this->addMethod(Http::Put);
+            $this->addMethod(Method::Put);
             $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function delete(string $pattern, callable|array $handler, array $middlewares = []): void
         {
-            $this->addMethod(Http::Delete);
+            $this->addMethod(Method::Delete);
             $this->addRoute($pattern, $handler, $middlewares);
         }
 
         public function dispatch(string $uri): void
         {
             try {
+                $request = Request::fromGlobals();
+
                 foreach ($this->routes as $route) {
                     if (preg_match($route["regex"], $uri, $matches)) {
                         array_shift($matches);
                         $params = array_combine($route["paramNames"], $matches);
-                        $next = function () use ($route, $params) {
-                            if (is_array($route["handler"])) {
-                                ResponseHandler::IfEchoValue($this->handlerController($route["handler"], $params));
+                        $request->setParams($params);
+
+                        $next = function () use ($route, $request, $params) {
+                            if (!is_callable($route["handler"])) {
+                                return;
                             }
 
-                            if (is_object($route["handler"])) {
-                                ResponseHandler::IfEchoValue($this->handlerFunc($route, $params));
+                            ob_start();
+                            $args = array_values($params);
+                            array_unshift($args, $request);
+
+                            $result = call_user_func_array(Closure::bind($route["handler"], $this, get_class($this)), $args);
+                            $output = ob_get_clean();
+
+                            if (is_scalar($result)) {
+                                echo $output . $result;
+                            } elseif ($output !== "") {
+                                echo $output;
+                            } elseif ($result !== null) {
+                                echo is_string($result) ? $result : json_encode($result);
                             }
                         };
 
-                        $middlewareChain = array_reverse(!empty($route["middlewares"]) ? $route["middlewares"] : []);
-                        foreach ($middlewareChain as $middleware) {
+                        foreach (array_reverse($route["middlewares"] ?? []) as $middleware) {
                             $current = $next;
                             $next = function () use ($middleware, $params, $current): Closure {
                                 return $middleware($params, $current);
@@ -203,68 +162,13 @@ namespace PugKit\Router {
                     }
                 }
 
-                throw new Exception("404 Not Found", Http::CodeNotFound);
+                throw new Exception("404 Not Found", self::CodeNotFound);
             } catch (Exception $e) {
                 header("Content-type: application/json");
-
                 error_log($e->getMessage());
                 echo json_encode(["data" => null, "message" => $e->getMessage(), "error_line" => $e->getLine(), "code" => $e->getCode()], JSON_PRETTY_PRINT);
                 exit;
             }
-        }
-
-        private function convertToRegex(string $pattern, ?array &$paramNames = []): string
-        {
-            $paramNames = [];
-            $regex = preg_replace_callback("#\{(\w+)\}#", function ($matches) use (&$paramNames) {
-                $paramNames[] = $matches[1];
-                return "([^/]+)";
-            }, $pattern);
-            return "#^" . $regex . "$#";
-        }
-
-        private function addRoute(string $pattern, callable|array $handler, array $middlewares = []): void
-        {
-            $this->routes[] = [
-                "regex" => $this->convertToRegex($this->prefix . $pattern, $paramNames),
-                "paramNames" => $paramNames,
-                "handler" => $handler,
-                "middlewares" => $middlewares,
-            ];
-        }
-
-        private function addMethod(string $method): void
-        {
-            if ($_SERVER["REQUEST_METHOD"] !== $method) throw new Exception("Invalid HTTP method. Expected {$method}", Http::MethodNotAllowed);
-        }
-
-        private function handlerFunc(array $actionHandler, array $params)
-        {
-            return call_user_func_array($actionHandler["handler"], $params);
-        }
-
-        private function handlerController(array $actionHandler, array $params): mixed
-        {
-            list($controllerClass, $methodName) = $actionHandler;
-
-            if (!class_exists($controllerClass)) {
-                throw new Exception("Controller {$controllerClass} not found.", ErrCode::APP);
-            }
-
-            global $container;
-            $request = Request::createFromGlobals();
-
-            $constructorArgs = [$container];
-            $controller = new $controllerClass(...$constructorArgs);
-
-            if (!method_exists($controller, $methodName)) {
-                throw new Exception("Method {$methodName} not found in controller {$controllerClass}.", ErrCode::APP);
-            }
-
-            $params = count($params) ? $params : [];
-            $methodArgs = array_merge([$request], $params);
-
-            return call_user_func_array([$controller, $methodName], $methodArgs);
         }
     }
 }
@@ -272,423 +176,92 @@ namespace PugKit\Router {
 namespace PugKit\DI {
 
     use Exception;
-    use PugKit\BackendEnums\ErrCode;
+    use PugKit\Http\Response\BackendEnums\Error;
 
-    use function PugKit\Helper\str_or_object;
-
-    interface ContainerIneterface
+    interface ContainerInterface
     {
-        /**
-         * @param string $container
-         * @param callable $fn
-         * @return void
-         */
-        public function set($container, $fn);
-
-        /**
-         * @param string $container
-         * @return boolean
-         */
-        public function has($container);
-
-        /**
-         * @param string $container
-         * @return mixed
-         * @throws Exception
-         */
-        public function get($container);
-
-        /**
-         * @param string $interface
-         * @return object
-         * @throws Exception
-         */
-        public function repository($interface);
-
-        /**
-         * @param string $interface
-         * @return object
-         * @throws Exception
-         */
-        public function service($interface);
+        public function bind(mixed $container, callable $fn): void;
+        public function has(mixed $container): bool;
+        public function using(mixed $container): mixed;
     }
 
-    class Container implements ContainerIneterface
+    trait Container
     {
-        /**
-         * @var array
-         */
-        public $building = [];
+        private array $building = [];
 
-        /** 
-         * @param string $container
-         * @param callable $fn
-         * @return void
-         */
-        public function set($container, $fn)
+        public function bind(mixed $container, callable $fn): void
         {
             $this->building[$container] = $fn->bindTo($this, $this);
         }
 
-        /**
-         * @param string $container
-         * @return boolean
-         */
-        public function has($container)
+        public function has(mixed $container): bool
         {
             return !empty($this->building[$container]) ? true : false;
         }
 
-        /**
-         * @param string $container
-         * @return mixed
-         */
-        public function get($container)
+        public function using(mixed $container): mixed
         {
             if (isset($this->building[$container])) {
                 return ($this->building[$container])();
             }
-            throw new Exception("Container not found: {$container}", ErrCode::APP);
-        }
-
-        /**
-         * @param string $interface
-         * @param string $type
-         * @return object
-         * @throws Exception
-         */
-        private function getInstance($interface, $type)
-        {
-            if (interface_exists($interface) && strpos($interface, ucfirst($type)) !== false) {
-                if (!empty($this->building[$type])) {
-                    $instance = $this->building[$type]()[$interface];
-                    return str_or_object($instance);
-                }
-                throw new Exception(ucfirst($type) . " not found: {$interface}", ErrCode::APP);
-            }
-            throw new Exception("Invalid interface or missing '{$type}' keyword: {$interface}", ErrCode::APP);
-        }
-
-        /**
-         * @param string $interface
-         * @return object
-         */
-        public function repository($interface)
-        {
-            return $this->getInstance($interface, "repository");
-        }
-
-        /**
-         * @param string $interface
-         * @return object
-         */
-        public function service($interface)
-        {
-            return $this->getInstance($interface, "service");
+            throw new Exception("Container not found: {$container}", Error::App->value);
         }
     }
 }
 
-namespace PugKit\DotENV {
+namespace PugKit\Http\Response\BackendEnums {
 
-    interface DotEnvEnvironmentInterface
+    enum Method: string
     {
-        /**
-         * @param string $path
-         * @return DotEnvEnvironmentInterface
-         */
-        public function load(string $path): DotEnvEnvironmentInterface;
-
-        /**
-         * @return array
-         */
-        public function all(): array;
-
-        /**
-         * @param string $key
-         * @return mixed
-         */
-        public function key(string $key): mixed;
+        case Get = "GET";
+        case Post = "POST";
+        case Put = "PUT";
+        case Delete = "DELETE";
     }
 
-    class DotEnvEnvironment implements DotEnvEnvironmentInterface
+    enum HttpStatus: int
     {
-        /**
-         * @var array
-         */
-        private $allEnvSetting = [];
-        /**
-         * @param string $path
-         * @return DotEnvEnvironmentInterface
-         */
-        public function load(string $path): DotEnvEnvironmentInterface
-        {
-            $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        case CONTINUE = 100;
+        case SWITCHING_PROTOCOLS = 101;
 
-            foreach ($lines as $line) {
-                $line = trim($line);
+        case OK = 200;
+        case CREATED = 201;
+        case ACCEPTED = 202;
+        case NO_CONTENT = 204;
 
-                if (empty($line) || strpos($line, "#") === 0) {
-                    continue;
-                }
+        case MOVED_PERMANENTLY = 301;
+        case FOUND = 302;
+        case NOT_MODIFIED = 304;
 
-                $parts = explode("=", $line, 2);
-                if (count($parts) < 2) {
-                    continue;
-                }
+        case BAD_REQUEST = 400;
+        case UNAUTHORIZED = 401;
+        case FORBIDDEN = 403;
+        case NOT_FOUND = 404;
+        case METHOD_NOT_ALLOWED = 405;
+        case UNPROCESSABLE_ENTITY = 422;
 
-                list($key, $value) = $parts;
-                $key = trim($key);
-                $value = trim($value);
-
-                putenv(sprintf("%s=%s", $key, $value));
-                $_ENV[$key] = $value;
-
-                $this->allEnvSetting[$key] = $value;
-            }
-
-            return $this;
-        }
-
-        /**
-         * @return array
-         */
-        public function all(): array
-        {
-            return $this->allEnvSetting;
-        }
-
-        /**
-         * @param string $key
-         * @return mixed
-         */
-        public function key(string $key): mixed
-        {
-            return $this->allEnvSetting[$key];
-        }
-    }
-}
-
-namespace PugKit\Request {
-
-    use PugKit\BackendEnums\Http;
-
-    interface RequestInterface
-    {
-        public function only(array $defaults): array;
-        public function get(): array;
-        public function post(): array;
-        public function multipart(): array;
-        public function json(): array;
-        public function getData(string $type): array;
-        public function hasData(string $type): bool;
+        case INTERNAL_SERVER_ERROR = 500;
+        case NOT_IMPLEMENTED = 501;
+        case BAD_GATEWAY = 502;
+        case SERVICE_UNAVAILABLE = 503;
     }
 
-    class Request implements RequestInterface
+    enum Error: int
     {
-        private static array $data = [];
-
-        private function __construct() {}
-
-        public static function createFromGlobals(): RequestInterface
-        {
-            static::$data = [
-                "POST"   => static::sanitize($_POST),
-                "GET"    => static::sanitize($_GET),
-                "FILES"  => $_FILES,
-                "JSON"   => static::fromJSON(),
-                "SERVER" => $_SERVER,
-            ];
-
-            return new static();
-        }
-
-        public function only(array $defaults): array
-        {
-            $methods = [];
-            foreach ($defaults as $default) {
-                $default = strtoupper($default);
-                $methods[$default] = !empty(self::$methods[$default]) ? self::$data[$default] : [];
-            }
-
-            return $methods;
-        }
-
-        public function get(): array
-        {
-            return $this->only([Http::Get])[Http::Get];
-        }
-
-        public function post(): array
-        {
-            return $this->only([Http::Post])[Http::Post];
-        }
-
-        public function multipart(): array
-        {
-            return $this->only([Http::Multipart])[Http::Multipart];
-        }
-
-        public function json(): array
-        {
-            return $this->only([Http::Json])[Http::Json];
-        }
-
-        public function getData(string $type): array
-        {
-            $key = strtoupper($type);
-            return static::$data[$key] ?? [];
-        }
-
-        public function hasData(string $type): bool
-        {
-            $key = strtoupper($type);
-            return array_key_exists($key, static::$data) && !empty(static::$data[$key]);
-        }
-
-        private static function fromJSON(): array
-        {
-            $raw = file_get_contents("php://input");
-            $decoded = json_decode($raw, true);
-            return is_array($decoded) ? static::sanitize($decoded) : [];
-        }
-
-        private static function sanitize(array $input): array
-        {
-            return array_map(function ($value) {
-                if (is_array($value)) {
-                    return static::sanitize($value);
-                }
-                return is_string($value) ? htmlspecialchars(trim($value), ENT_QUOTES, "UTF-8") : $value;
-            }, $input);
-        }
-    }
-}
-
-namespace PugKit\Response {
-
-    use JsonSerializable;
-
-    class ResponseEnums
-    {
-        // Informational 1xx
-        public const CONTINUE = 100;
-        public const SWITCHING_PROTOCOLS = 101;
-
-        // Successful 2xx
-        public const OK = 200;
-        public const CREATED = 201;
-        public const ACCEPTED = 202;
-        public const NO_CONTENT = 204;
-
-        // Redirection 3xx
-        public const MOVED_PERMANENTLY = 301;
-        public const FOUND = 302;
-        public const NOT_MODIFIED = 304;
-
-        // Client Error 4xx
-        public const BAD_REQUEST = 400;
-        public const UNAUTHORIZED = 401;
-        public const FORBIDDEN = 403;
-        public const NOT_FOUND = 404;
-        public const METHOD_NOT_ALLOWED = 405;
-        public const UNPROCESSABLE_ENTITY = 422;
-
-        // Server Error 5xx
-        public const INTERNAL_SERVER_ERROR = 500;
-        public const NOT_IMPLEMENTED = 501;
-        public const BAD_GATEWAY = 502;
-        public const SERVICE_UNAVAILABLE = 503;
-    }
-
-    class JsonResponse implements JsonSerializable
-    {
-        private array|object $data;
-        private string $message;
-        private int $status;
-
-        public function __construct(array|object $data, string $message, int $status)
-        {
-            $this->data = $data;
-            $this->message = $message;
-            $this->status = $status;
-        }
-
-        public function jsonSerialize(): array
-        {
-            return [
-                "data" => $this->data,
-                "message" => $this->message,
-                "status" => $this->status
-            ];
-        }
-    }
-
-    class ResponseHandler
-    {
-        public static function IfEchoValue($type = null)
-        {
-            if ($type instanceof JsonResponse) {
-                header("Content-type: application/json");
-                echo json_encode($type, JSON_PRETTY_PRINT);
-                return;
-            }
-
-            if (is_array($type) || is_object($type)) {
-                header("Content-type: application/json");
-                echo json_encode($type, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-                return;
-            }
-
-            self::xssHeader();
-            echo $type;
-        }
-
-        public static function xssHeader()
-        {
-            header('X-XSS-Protection: 1; mode=block');
-            // header("Content-Security-Policy: default-src 'self'; script-src 'self'");
-        }
+        case App = 500;
     }
 }
 
 namespace PugKit\ViewFactory {
 
-    use function PugKit\Helper\csrf_web;
+    use function PugKit\Helpers\csrf_web;
 
     interface ViewInterface
     {
-        /**
-         * @param string $header
-         * @param mixed $data
-         * @return void
-         */
         public function layoutHeader(string $header, mixed $data = null): void;
-
-        /**
-         * @param string $header
-         * @param mixed $data
-         * @return void
-         */
         public function layoutContent(string $content, mixed $data = null): void;
-
-        /**
-         * @param string $header
-         * @param mixed $data
-         * @return void
-         */
         public function layoutFooter(string $footer, mixed $data = null): void;
-
-        /**
-         * @param string $key
-         * @param mixed $value
-         * @return static
-         */
         public function with(string $key, mixed $value): static;
-
-        /*
-         * @return string
-         */
         public function render(): string;
     }
 
@@ -715,7 +288,7 @@ namespace PugKit\ViewFactory {
             $this->layouts["content"] = $content;
             $this->layouts["content_vars"] = $data;
         }
-        
+
         public function layoutFooter(string $footer, $data = null): void
         {
             $this->layouts["footer"] = $footer;
@@ -759,10 +332,6 @@ namespace PugKit\ViewFactory {
             return ob_get_clean();
         }
 
-        /**
-         * @param array $data
-         * @return array
-         */
         private function escapeData(array $data): array
         {
             return array_map(function ($value) {
@@ -772,18 +341,163 @@ namespace PugKit\ViewFactory {
     }
 }
 
-namespace PugKit\Helper {
+namespace PugKit\Http\Response {
+
+    use JsonSerializable;
+
+    class ResponseHandler
+    {
+        public static function send(mixed $response): void
+        {
+            if ($response instanceof JsonResponse) {
+                self::sendJson($response);
+                return;
+            }
+
+            if (is_array($response) || is_object($response)) {
+                self::sendJson($response);
+                return;
+            }
+
+            self::sendHtml((string) $response);
+        }
+
+        private static function sendJson(mixed $data): void
+        {
+            header("Content-Type: application/json; charset=utf-8");
+            echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        }
+
+        private static function sendHtml(string $content): void
+        {
+            self::sendSecurityHeaders();
+            header("Content-Type: text/html; charset=utf-8");
+            echo $content;
+        }
+
+        private static function sendSecurityHeaders(): void
+        {
+            header('X-XSS-Protection: 1; mode=block');
+            header('X-Content-Type-Options: nosniff');
+        }
+    }
+
+    class JsonResponse implements JsonSerializable
+    {
+        private array|object $data;
+        private string $message;
+        private int $status;
+
+        public function __construct(array|object $data, string $message, int $status)
+        {
+            $this->data = $data;
+            $this->message = $message;
+            $this->status = $status;
+        }
+
+        public function jsonSerialize(): array
+        {
+            return [
+                "data" => $this->data,
+                "message" => $this->message,
+                "status" => $this->status
+            ];
+        }
+    }
+}
+
+namespace PugKit\Http\Request {
+
+    use function PugKit\Helpers\conv_toobj;
+
+    interface RequestInterface
+    {
+        public function only(array $keys): array;
+        public function setParams(array $params): void;
+        public function params(): object;
+    }
+
+    class Request implements RequestInterface
+    {
+        private static array $store = [];
+        private array $params = [];
+
+        public static function fromGlobals(): RequestInterface
+        {
+            self::$store = [
+                "POST"   => $_POST ?? [],
+                "GET"    => $_GET ?? [],
+                "FILES"  => $_FILES ?? [],
+                "JSON"   => json_decode(file_get_contents("php://input"), true) ?? [],
+                "SERVER" => $_SERVER ?? [],
+            ];
+
+            return new self();
+        }
+
+        public function setParams(array $params): void
+        {
+            $this->params = $params;
+        }
+
+        public function params(): object
+        {
+            return conv_toobj($this->params);
+        }
+
+        public function only(array $keys): array
+        {
+            $method = strtoupper($_SERVER["REQUEST_METHOD"] ?? "GET");
+
+            $data = self::$store[$method] ?? [];
+            return array_intersect_key($data, array_flip($keys));
+        }
+    }
+}
+
+namespace PugKit\DotENV {
+
+    interface EnvironmentInterface
+    {
+        public static function load(string $path): void;
+    }
+
+    class Environment implements EnvironmentInterface
+    {
+        public static function load(string $path): void
+        {
+            $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            foreach ($lines as $line) {
+                $line = trim($line);
+
+                if (empty($line) || strpos($line, "#") === 0) {
+                    continue;
+                }
+
+                $parts = explode("=", $line, 2);
+                if (count($parts) < 2) {
+                    continue;
+                }
+
+                list($key, $value) = $parts;
+                $key = trim($key);
+                $value = trim($value);
+
+                putenv(sprintf("%s=%s", $key, $value));
+                $_ENV[$key] = $value;
+            }
+        }
+    }
+}
+
+namespace PugKit\Helpers {
 
     use InvalidArgumentException;
-    use PugKit\BackendEnums\ErrCode;
+    use PugKit\Http\Response\BackendEnums\Error;
     use stdClass;
 
     if (!function_exists("conv_toobj")) {
 
-        /**
-         * @param mixed $data
-         * @return mixed
-         */
         function conv_toobj(mixed $data): mixed
         {
             if (is_array($data)) {
@@ -805,10 +519,6 @@ namespace PugKit\Helper {
 
     if (!function_exists("context_xss")) {
 
-        /**
-         * @param mixed $input
-         * @return string
-         */
         function context_xss(mixed $input): string
         {
             $input = trim($input);
@@ -820,11 +530,6 @@ namespace PugKit\Helper {
 
     if (!function_exists("arr_upr")) {
 
-        /**
-         * @param $input
-         * @param $case
-         * @return array
-         */
         function arr_upr($input, $case = MB_CASE_TITLE): array
         {
             $convToCamel = function ($str) {
@@ -849,9 +554,6 @@ namespace PugKit\Helper {
 
     if (!function_exists("csrf_web")) {
 
-        /*
-         * @return string
-         */
         function csrf_web(): string
         {
             return bin2hex(random_bytes(32));
@@ -860,17 +562,13 @@ namespace PugKit\Helper {
 
     if (!function_exists("str_or_object")) {
 
-        /**
-         * @param string $instance
-         * @return object|null
-         */
         function str_or_object(string $instance): ?object
         {
             if (is_string($instance)) {
                 if (class_exists($instance)) {
                     return new $instance();
                 } else {
-                    throw new InvalidArgumentException("Class $instance does not exist.", ErrCode::APP);
+                    throw new InvalidArgumentException("Class $instance does not exist.", Error::App->value);
                 }
             }
 
@@ -878,16 +576,12 @@ namespace PugKit\Helper {
                 return $instance;
             }
 
-            throw new InvalidArgumentException("Argument must be a string or an object.", ErrCode::APP);
+            throw new InvalidArgumentException("Argument must be a string or an object.", Error::App->value);
         }
     }
 
     if (!function_exists("dd")) {
 
-        /**
-         * @param mixed $data
-         * @return void
-         */
         function dd(mixed $data)
         {
             echo "<pre>";
