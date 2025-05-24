@@ -2,16 +2,49 @@
 
 declare(strict_types=1);
 
+use App\Core\Controllers\User\UserController;
+use PugKit\DotENV\Environment;
+use PugKit\Http\Request\RequestInterface;
+use PugKit\RouterCore\RouterGroupInterface;
 use PugKit\Singleton\Application;
 
-require_once __DIR__ . "/../app/boostrap/framework/singleton.php";
+require_once __DIR__ . "/../public/loadclasses.php";
+require_once __DIR__ . "/../app/boostrap/framework/PugKit.php";
+
+Environment::load(__DIR__ . "/../configs/dev_.env");
 
 $app = Application::concreate();
 
+/** @var Application&ContainerInterface $app */
+$app->bind(PDO::class, function () {
+    try {
+        $pdo = new PDO("mysql:host={$_ENV["DB_HOST"]};dbname={$_ENV["DB_NAME"]}", $_ENV["DB_USERNAME"], $_ENV["DB_PASSWORD"]);
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
+        return $pdo;
+    } catch (PDOException $err) {
+        die($err->getMessage());
+    }
+});
+
 /** @var Application&RouterInterface $app */
-$app->get("/", function () {
+$app->get("/", function (RequestInterface $request) {
     return "Hello index";
 });
 
-$route = filter_var(!empty($_GET["route"]) ? trim($_GET["route"]) : "/", FILTER_SANITIZE_URL);
+$app->get("/user/{id}", function (RequestInterface $request) {
+    $params = $request->params();
+    return $params->id;
+});
+
+$app->get("/hasconn", function (RequestInterface $request) {
+    return $this->has(PDO::class);
+});
+
+$app->group("/api/v1", function (RouterGroupInterface $group) {
+    $group->get("/user/get/{userId}", [UserController::class, "get"]);
+    $group->get("/user/getlist", [UserController::class, "getlist"]);
+});
+
+$route = filter_var($_GET["route"] ?? "/", FILTER_SANITIZE_URL);
 $app->dispatch($route);

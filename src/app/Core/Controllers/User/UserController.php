@@ -4,23 +4,17 @@ namespace App\Core\Controllers\User;
 
 use App\Core\Controllers\BaseController;
 use PDO;
-use PugKit\DI\ContainerIneterface;
-use PugKit\Request\RequestInterface;
-use PugKit\Response\JsonResponse;
-use PugKit\Response\ResponseEnums;
+use PugKit\DI\ContainerInterface;
+use PugKit\Http\Request\RequestInterface;
+use PugKit\Http\Response\JsonResponse;
 
 class UserController extends BaseController
 {
-    private ContainerIneterface $container;
-
-    public function __construct(ContainerIneterface $container)
-    {
-        $this->container = $container;
-    }
+    public function __construct(private ContainerInterface $container) {}
 
     public function get(RequestInterface $request, string $userId): JsonResponse
     {
-        $db = $this->container->get(PDO::class);
+        $db = $this->container->using(PDO::class);
 
         $sql = "SELECT * FROM users WHERE user_id = :user_id";
         $stmt = $db->prepare($sql);
@@ -29,12 +23,12 @@ class UserController extends BaseController
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        return new JsonResponse($rows, "Success", ResponseEnums::OK);
+        return new JsonResponse($rows, "Success", 200);
     }
 
     public function getlist(RequestInterface $request): JsonResponse
     {
-        $db = $this->container->get(PDO::class);
+        $db = $this->container->using(PDO::class);
 
         $sql = "SELECT * FROM users";
         $stmt = $db->prepare($sql);
@@ -42,6 +36,6 @@ class UserController extends BaseController
 
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        return new JsonResponse($rows, "Success", ResponseEnums::OK);
+        return new JsonResponse($rows, "Success", 200);
     }
 }
