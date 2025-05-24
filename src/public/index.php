@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use App\Core\Controllers\User\UserController;
 use PugKit\DotENV\Environment;
 use PugKit\Http\Request\RequestInterface;
+use PugKit\RouterCore\RouterGroupInterface;
 use PugKit\Singleton\Application;
 
+require_once __DIR__ . "/../public/loadclasses.php";
 require_once __DIR__ . "/../app/boostrap/framework/PugKit.php";
 
 Environment::load(__DIR__ . "/../configs/dev_.env");
@@ -36,6 +39,11 @@ $app->get("/user/{id}", function (RequestInterface $request) {
 
 $app->get("/hasconn", function (RequestInterface $request) {
     return $this->has(PDO::class);
+});
+
+$app->group("/api/v1", function (RouterGroupInterface $group) {
+    $group->get("/user/get/{userId}", [UserController::class, "get"]);
+    $group->get("/user/getlist", [UserController::class, "getlist"]);
 });
 
 $route = filter_var($_GET["route"] ?? "/", FILTER_SANITIZE_URL);

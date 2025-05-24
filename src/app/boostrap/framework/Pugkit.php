@@ -41,6 +41,7 @@ namespace PugKit\RouterCore {
     use Exception;
     use PugKit\Http\Request\Request;
     use PugKit\Http\Response\BackendEnums\Method;
+    use PugKit\Http\Response\JsonResponse;
 
     interface RouterInterface
     {
@@ -51,6 +52,8 @@ namespace PugKit\RouterCore {
         public function delete(string $pattern, callable|array $handler, array $middlewares = []): void;
         public function dispatch(string $uri): void;
     }
+
+    interface RouterGroupInterface extends RouterInterface {}
 
     trait Router
     {
@@ -89,8 +92,50 @@ namespace PugKit\RouterCore {
         public function group(string $prefix, callable $callback): void
         {
             $previousPrefix = $this->prefix;
-            $this->prefix .= $prefix;
-            $callback($this);
+            $this->prefix = rtrim($prefix, "/");
+
+            $group = new class($this, $this->prefix) implements RouterGroupInterface {
+                private object $router;
+                private string $prefix;
+
+                public function __construct(object $router, string $prefix)
+                {
+                    $this->router = $router;
+                    $this->prefix = $prefix;
+                }
+
+                public function get(string $pattern, callable|array $handler, array $middlewares = []): void
+                {
+                    $this->router->get($pattern, $handler, $middlewares);
+                }
+
+                public function post(string $pattern, callable|array $handler, array $middlewares = []): void
+                {
+                    $this->router->post($pattern, $handler, $middlewares);
+                }
+
+                public function put(string $pattern, callable|array $handler, array $middlewares = []): void
+                {
+                    $this->router->put($pattern, $handler, $middlewares);
+                }
+
+                public function delete(string $pattern, callable|array $handler, array $middlewares = []): void
+                {
+                    $this->router->delete($pattern, $handler, $middlewares);
+                }
+
+                public function group(string $prefix, callable $callback): void
+                {
+                    $this->router->group($this->prefix . $prefix, $callback);
+                }
+
+                public function dispatch(string $uri): void
+                {
+                    $this->router->dispatch($uri);
+                }
+            };
+
+            $callback($group);
             $this->prefix = $previousPrefix;
         }
 
@@ -130,18 +175,30 @@ namespace PugKit\RouterCore {
                         $request->setParams($params);
 
                         $next = function () use ($route, $request, $params) {
-                            if (!is_callable($route["handler"])) {
-                                return;
-                            }
-
                             ob_start();
+
                             $args = array_values($params);
                             array_unshift($args, $request);
 
-                            $result = call_user_func_array(Closure::bind($route["handler"], $this, get_class($this)), $args);
+                            $handler = $route["handler"];
+                            $result = null;
+
+                            if ($handler instanceof Closure) {
+                                $bound = Closure::bind($handler, $this, get_class($this));
+                                $result = call_user_func_array($bound, $args);
+                            } elseif (is_array($handler) && is_string($handler[0]) && is_string($handler[1])) {
+                                $instance = new $handler[0]($this);
+                                $methodName = $handler[1];
+                                $result = $instance->$methodName(...$args);
+                            }
+
                             $output = ob_get_clean();
 
-                            if (is_scalar($result)) {
+                            if ($result instanceof JsonResponse) {
+                                header("Content-Type: application/json");
+                                http_response_code($result->codeStatus);
+                                echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                            } elseif (is_scalar($result)) {
                                 echo $output . $result;
                             } elseif ($output !== "") {
                                 echo $output;
@@ -166,7 +223,12 @@ namespace PugKit\RouterCore {
             } catch (Exception $e) {
                 header("Content-type: application/json");
                 error_log($e->getMessage());
-                echo json_encode(["data" => null, "message" => $e->getMessage(), "error_line" => $e->getLine(), "code" => $e->getCode()], JSON_PRETTY_PRINT);
+                echo json_encode([
+                    "data" => null,
+                    "message" => $e->getMessage(),
+                    "error_line" => $e->getLine(),
+                    "code" => $e->getCode()
+                ], JSON_PRETTY_PRINT);
                 exit;
             }
         }
@@ -388,11 +450,14 @@ namespace PugKit\Http\Response {
         private string $message;
         private int $status;
 
+        public int $codeStatus;
+
         public function __construct(array|object $data, string $message, int $status)
         {
             $this->data = $data;
             $this->message = $message;
             $this->status = $status;
+            $this->codeStatus = $status;
         }
 
         public function jsonSerialize(): array
