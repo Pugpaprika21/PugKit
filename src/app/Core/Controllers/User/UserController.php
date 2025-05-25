@@ -12,7 +12,7 @@ class UserController extends BaseController
 {
     public function __construct(private ContainerInterface $container) {}
 
-    public function get(RequestInterface $request, string $userId): JsonResponse
+    public function getUser(RequestInterface $request, string $userId): JsonResponse
     {
         $db = $this->container->using(PDO::class);
 
@@ -26,7 +26,7 @@ class UserController extends BaseController
         return new JsonResponse($rows, "Success", 200);
     }
 
-    public function getlist(RequestInterface $request): JsonResponse
+    public function getUsers(RequestInterface $request): JsonResponse
     {
         $db = $this->container->using(PDO::class);
 

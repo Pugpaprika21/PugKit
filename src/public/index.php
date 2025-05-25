@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Core\Controllers\HomeController;
 use App\Core\Controllers\User\UserController;
 use PugKit\DotENV\Environment;
 use PugKit\Http\Request\RequestInterface;
@@ -23,27 +24,21 @@ $app->bind(PDO::class, function () {
         $pdo->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
         return $pdo;
     } catch (PDOException $err) {
-        die($err->getMessage());
+        throw new Exception($err->getMessage(), 500);
     }
 });
 
 /** @var Application&RouterInterface $app */
-$app->get("/", function (RequestInterface $request) {
-    return "Hello index";
-});
+$app->get("/", [HomeController::class, "index"]);
 
 $app->get("/user/{id}", function (RequestInterface $request) {
     $params = $request->params();
     return $params->id;
 });
 
-$app->get("/hasconn", function (RequestInterface $request) {
-    return $this->has(PDO::class);
-});
-
 $app->group("/api/v1", function (RouterGroupInterface $group) {
-    $group->get("/user/get/{userId}", [UserController::class, "get"]);
-    $group->get("/user/getlist", [UserController::class, "getlist"]);
+    $group->get("/user/get/{userId}", [UserController::class, "getUser"]);
+    $group->get("/user/getlist", [UserController::class, "getUsers"]);
 });
 
 $route = filter_var($_GET["route"] ?? "/", FILTER_SANITIZE_URL);
