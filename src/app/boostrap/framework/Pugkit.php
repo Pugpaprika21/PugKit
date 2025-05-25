@@ -290,6 +290,8 @@ namespace PugKit\Web\Display {
                 } else {
                     include_once sprintf("%s../../../views/_errors/%s", __DIR__, "500.php");
                 }
+
+                http_response_code($e->getCode());
             }
             return ob_get_clean();
         }
