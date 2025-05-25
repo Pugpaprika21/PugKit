@@ -12,16 +12,21 @@ namespace PugKit\Singleton {
     use PugKit\DI\ContainerInterface;
     use PugKit\RouterCore\Router;
     use PugKit\RouterCore\RouterInterface;
+    use PugKit\Web\Display\View;
+    use PugKit\Web\Display\ViewDisplayInterface;
+    use PugKit\Web\Url\Redirect;
 
     interface ApplicationInterface
     {
         public static function concreate(): ApplicationInterface;
     }
 
-    final class Application implements ApplicationInterface, RouterInterface, ContainerInterface
+    final class Application implements ApplicationInterface, RouterInterface, ContainerInterface, ViewDisplayInterface
     {
         use Router;
         use Container;
+        use Redirect;
+        use View;
 
         private static ?ApplicationInterface $instance = null;
 
@@ -221,16 +226,72 @@ namespace PugKit\RouterCore {
 
                 throw new Exception("404 Not Found", self::CodeNotFound);
             } catch (Exception $e) {
-                header("Content-type: application/json");
-                error_log($e->getMessage());
-                echo json_encode([
-                    "data" => null,
-                    "message" => $e->getMessage(),
-                    "error_line" => $e->getLine(),
-                    "code" => $e->getCode()
-                ], JSON_PRETTY_PRINT);
+                echo static::errors("404.php", $e)->render();
                 exit;
             }
+        }
+    }
+}
+
+namespace PugKit\Web\Url {
+
+    trait Redirect
+    {
+        public function url(string $path)
+        {
+            print_r($this->routes);
+            exit;
+        }
+    }
+}
+
+namespace PugKit\Web\Display {
+
+    use Exception;
+
+    interface ViewDisplayInterface
+    {
+        public static function view(string $viewPath): ViewDisplayInterface;
+        public static function errors(string $errView, Exception $excep): ViewDisplayInterface;
+        public function render(): string;
+    }
+
+    trait View
+    {
+        private array $data = [];
+        private array $layouts = [];
+
+        private static string $hasErr = "";
+        private static string $errView;
+        private static Exception $excep;
+
+        public static function view(string $viewPath): ViewDisplayInterface
+        {
+            return new self;
+        }
+
+        public static function errors(string $errView, Exception $excep): ViewDisplayInterface
+        {
+            error_log($excep->getMessage());
+
+            self::$hasErr = "ERROR";
+            self::$errView = $errView;
+            self::$excep = $excep;
+            return new self;
+        }
+
+        public function render(): string
+        {
+            ob_start();
+            if (!empty(self::$hasErr)) {
+                $e = self::$excep;
+                if ($e->getCode() == 404) {
+                    include_once sprintf("%s../../../views/_errors/%s", __DIR__, self::$errView);
+                } else {
+                    include_once sprintf("%s../../../views/_errors/%s", __DIR__, "500.php");
+                }
+            }
+            return ob_get_clean();
         }
     }
 }
