@@ -2,15 +2,6 @@
 
 namespace App\Core\Controllers;
 
-use PugKit\ViewFactory\View;
-use PugKit\ViewFactory\ViewInterface;
+use PugKit\Singleton\Application;
 
-abstract class BaseController
-{
-    protected ViewInterface $view;
-
-    public function __construct()
-    {
-        $this->view = new View();
-    }
-}
+abstract class BaseController extends Application { }

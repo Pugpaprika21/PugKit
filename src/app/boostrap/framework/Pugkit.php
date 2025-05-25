@@ -21,7 +21,7 @@ namespace PugKit\Singleton {
         public static function concreate(): ApplicationInterface;
     }
 
-    final class Application implements ApplicationInterface, RouterInterface, ContainerInterface, ViewDisplayInterface
+    class Application implements ApplicationInterface, RouterInterface, ContainerInterface, ViewDisplayInterface
     {
         use Router;
         use Container;
@@ -44,9 +44,11 @@ namespace PugKit\RouterCore {
 
     use Closure;
     use Exception;
+    use JsonSerializable;
     use PugKit\Http\Request\Request;
     use PugKit\Http\Response\BackendEnums\Method;
     use PugKit\Http\Response\JsonResponse;
+    use PugKit\Web\Display\ViewDisplayInterface;
 
     interface RouterInterface
     {
@@ -199,10 +201,12 @@ namespace PugKit\RouterCore {
 
                             $output = ob_get_clean();
 
-                            if ($result instanceof JsonResponse) {
+                            if ($result instanceof JsonSerializable) {
                                 header("Content-Type: application/json");
                                 http_response_code($result->codeStatus);
                                 echo json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+                            } elseif ($result instanceof ViewDisplayInterface) {
+                                echo $result->render();
                             } elseif (is_scalar($result)) {
                                 echo $output . $result;
                             } elseif ($output !== "") {
@@ -251,22 +255,25 @@ namespace PugKit\Web\Display {
 
     interface ViewDisplayInterface
     {
-        public static function view(string $viewPath): ViewDisplayInterface;
+        public static function view(string $viewPath, array $viewData): ViewDisplayInterface;
         public static function errors(string $errView, Exception $excep): ViewDisplayInterface;
         public function render(): string;
     }
 
     trait View
     {
-        private array $data = [];
-        private array $layouts = [];
+        private static string $viewPath;
+        private static array $viewData;
 
-        private static string $hasErr = "";
+        private static string $hasErr;
         private static string $errView;
         private static Exception $excep;
 
-        public static function view(string $viewPath): ViewDisplayInterface
+        public static function view(string $viewPath, array $viewData = []): ViewDisplayInterface
         {
+            self::$hasErr = "";
+            self::$viewPath = $viewPath;
+            self::$viewData = $viewData;
             return new self;
         }
 
@@ -292,8 +299,22 @@ namespace PugKit\Web\Display {
                 }
 
                 http_response_code($e->getCode());
+            } else {
+                $data = $this->escapeData(self::$viewData);
+                extract($data);
+                include_once sprintf("%s/../../views/%s", __DIR__, self::$viewPath);
             }
+
+            header("Content-Type: text/html; charset=UTF-8");
+            header("X-Content-Type-Options: nosniff");
+            header("X-Frame-Options: DENY");
+        
             return ob_get_clean();
+        }
+
+        private function escapeData(array $data): array
+        {
+            return array_map(fn($value) => is_string($value) ? htmlspecialchars($value, ENT_QUOTES, "UTF-8") : $value, $data);
         }
     }
 }
@@ -377,135 +398,9 @@ namespace PugKit\Http\Response\BackendEnums {
     }
 }
 
-namespace PugKit\ViewFactory {
-
-    use function PugKit\Helpers\csrf_web;
-
-    interface ViewInterface
-    {
-        public function layoutHeader(string $header, mixed $data = null): void;
-        public function layoutContent(string $content, mixed $data = null): void;
-        public function layoutFooter(string $footer, mixed $data = null): void;
-        public function with(string $key, mixed $value): static;
-        public function render(): string;
-    }
-
-    class View implements ViewInterface
-    {
-        private array $data = [];
-        private array $layouts = [];
-
-        public string $csrf;
-
-        public function __construct()
-        {
-            $this->csrf = csrf_web();
-        }
-
-        public function layoutHeader(string $header, $data = null): void
-        {
-            $this->layouts["header"] = $header;
-            $this->layouts["header_vars"] = $data;
-        }
-
-        public function layoutContent(string $content, $data = null): void
-        {
-            $this->layouts["content"] = $content;
-            $this->layouts["content_vars"] = $data;
-        }
-
-        public function layoutFooter(string $footer, $data = null): void
-        {
-            $this->layouts["footer"] = $footer;
-            $this->layouts["footer_vars"] = $data;
-        }
-
-        public function with(string $key, mixed $value): static
-        {
-            $this->data[$key] = $value;
-            return $this;
-        }
-
-        public function render(): string
-        {
-            $escapedData = array_map(function ($value) {
-                return is_string($value) ? htmlspecialchars($value, ENT_QUOTES, "UTF-8") : $value;
-            }, $this->data);
-
-            extract($escapedData);
-
-            ob_start();
-
-            if (isset($this->layouts["header"])) {
-                $headerVars = $this->escapeData($this->layouts["header_vars"] ?? []);
-                extract($headerVars);
-                include_once sprintf("%s/../../views/%s", __DIR__, $this->layouts["header"]);
-            }
-
-            if (isset($this->layouts["content"])) {
-                $contentVars = $this->escapeData($this->layouts["content_vars"] ?? []);
-                extract($contentVars);
-                include_once sprintf("%s/../../views/%s", __DIR__, $this->layouts["content"]);
-            }
-
-            if (isset($this->layouts["footer"])) {
-                $footerVars = $this->escapeData($this->layouts["footer_vars"] ?? []);
-                extract($footerVars);
-                include_once sprintf("%s/../../views/%s", __DIR__, $this->layouts["footer"]);
-            }
-
-            return ob_get_clean();
-        }
-
-        private function escapeData(array $data): array
-        {
-            return array_map(function ($value) {
-                return is_string($value) ? htmlspecialchars($value, ENT_QUOTES, "UTF-8") : $value;
-            }, $data);
-        }
-    }
-}
-
 namespace PugKit\Http\Response {
 
     use JsonSerializable;
-
-    class ResponseHandler
-    {
-        public static function send(mixed $response): void
-        {
-            if ($response instanceof JsonResponse) {
-                self::sendJson($response);
-                return;
-            }
-
-            if (is_array($response) || is_object($response)) {
-                self::sendJson($response);
-                return;
-            }
-
-            self::sendHtml((string) $response);
-        }
-
-        private static function sendJson(mixed $data): void
-        {
-            header("Content-Type: application/json; charset=utf-8");
-            echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-        }
-
-        private static function sendHtml(string $content): void
-        {
-            self::sendSecurityHeaders();
-            header("Content-Type: text/html; charset=utf-8");
-            echo $content;
-        }
-
-        private static function sendSecurityHeaders(): void
-        {
-            header('X-XSS-Protection: 1; mode=block');
-            header('X-Content-Type-Options: nosniff');
-        }
-    }
 
     class JsonResponse implements JsonSerializable
     {

@@ -2,15 +2,13 @@
 
 namespace App\Core\Controllers;
 
-use PugKit\Request\RequestInterface;
+use PugKit\Http\Request\RequestInterface;
+use PugKit\Web\Display\ViewDisplayInterface;
 
 class HomeController extends BaseController
 {
-    public function index(RequestInterface $request)
+    public function index(RequestInterface $request): ViewDisplayInterface
     {
-        $this->view->layoutHeader("home/layouts/header.php");
-        $this->view->layoutContent("home/pages/home.php");
-        $this->view->layoutFooter("home/layouts/footer.php");
-        return $this->view->render();
+        return $this->view("_pages/index.php");
     }
 }
