@@ -31,6 +31,8 @@ $app->bind(PDO::class, function () {
 /** @var Application&RouterInterface $app */
 $app->get("/", [HomeController::class, "index"]);
 
+$app->template("/html", "/index.php");
+
 $app->get("/user/{id}", function (RequestInterface $request) {
     $params = $request->params();
     return $params->id;

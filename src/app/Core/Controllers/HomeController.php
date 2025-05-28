@@ -9,6 +9,6 @@ class HomeController extends BaseController
 {
     public function index(RequestInterface $request): ViewDisplayInterface
     {
-        return $this->view("_pages/index.php");
+        return $this->view("index.php");
     }
 }

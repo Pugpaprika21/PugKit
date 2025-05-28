@@ -47,7 +47,6 @@ namespace PugKit\RouterCore {
     use JsonSerializable;
     use PugKit\Http\Request\Request;
     use PugKit\Http\Response\BackendEnums\Method;
-    use PugKit\Http\Response\JsonResponse;
     use PugKit\Web\Display\ViewDisplayInterface;
 
     interface RouterInterface
@@ -57,6 +56,7 @@ namespace PugKit\RouterCore {
         public function post(string $pattern, callable|array $handler, array $middlewares = []): void;
         public function put(string $pattern, callable|array $handler, array $middlewares = []): void;
         public function delete(string $pattern, callable|array $handler, array $middlewares = []): void;
+        public function template(string $pattern, string $viewPath, array $middlewares = []): void;
         public function dispatch(string $uri): void;
     }
 
@@ -131,6 +131,11 @@ namespace PugKit\RouterCore {
                     $this->router->delete($pattern, $handler, $middlewares);
                 }
 
+                public function template(string $pattern, string $viewPath, array $middlewares = []): void
+                {
+                    $this->router->template($pattern, $viewPath, $middlewares);
+                }
+
                 public function group(string $prefix, callable $callback): void
                 {
                     $this->router->group($this->prefix . $prefix, $callback);
@@ -168,6 +173,12 @@ namespace PugKit\RouterCore {
         {
             $this->addMethod(Method::Delete);
             $this->addRoute($pattern, $handler, $middlewares);
+        }
+
+        public function template(string $pattern, string $viewPath, array $middlewares = []): void
+        {
+            $this->addMethod(Method::Get);
+            $this->addRoute($pattern, fn() => $this->view($viewPath), $middlewares);
         }
 
         public function dispatch(string $uri): void
@@ -302,13 +313,13 @@ namespace PugKit\Web\Display {
             } else {
                 $data = $this->escapeData(self::$viewData);
                 extract($data);
-                include_once sprintf("%s/../../views/%s", __DIR__, self::$viewPath);
+                include_once sprintf("%s/../../views/_pages/%s", __DIR__, self::$viewPath);
             }
 
             header("Content-Type: text/html; charset=UTF-8");
             header("X-Content-Type-Options: nosniff");
             header("X-Frame-Options: DENY");
-        
+
             return ob_get_clean();
         }
 
