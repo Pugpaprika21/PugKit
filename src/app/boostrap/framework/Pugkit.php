@@ -10,8 +10,8 @@ namespace PugKit\Singleton {
 
     use PugKit\DI\Container;
     use PugKit\DI\ContainerInterface;
-    use PugKit\RouterCore\Router;
     use PugKit\RouterCore\RouterInterface;
+    use PugKit\RouterCore\ServerRouter;
     use PugKit\Web\Display\View;
     use PugKit\Web\Display\ViewDisplayInterface;
     use PugKit\Web\Url\Redirect;
@@ -19,23 +19,46 @@ namespace PugKit\Singleton {
     interface ApplicationInterface
     {
         public static function concreate(): ApplicationInterface;
+        public function getServerRouter(): ?RouterInterface;
+        public function getView(): ?ViewDisplayInterface;
     }
 
-    class Application implements ApplicationInterface, RouterInterface, ContainerInterface, ViewDisplayInterface
+    class Application implements ApplicationInterface, ContainerInterface
     {
-        use Router;
         use Container;
         use Redirect;
-        use View;
 
         private static ?ApplicationInterface $instance = null;
 
+        private static ?RouterInterface $router = null;
+        
+        private static ?ViewDisplayInterface $view = null;
+
+        private function __construct(?RouterInterface $router, ?ViewDisplayInterface $view)
+        {
+            self::$router = $router;
+            self::$view = $view;
+        }
+
         public static function concreate(): ApplicationInterface
         {
-            if (!self::$instance) {
-                self::$instance = new self();
+            if (is_null(self::$instance)) {
+                $view = new View(); 
+                $router = new ServerRouter($view); 
+                self::$instance = new self($router, $view);
             }
+
             return self::$instance;
+        }
+
+        public function getServerRouter(): ?RouterInterface
+        {
+            return self::$router;
+        }
+
+        public function getView(): ?ViewDisplayInterface
+        {
+            return self::$view;
         }
     }
 }
@@ -56,19 +79,26 @@ namespace PugKit\RouterCore {
         public function post(string $pattern, callable|array $handler, array $middlewares = []): void;
         public function put(string $pattern, callable|array $handler, array $middlewares = []): void;
         public function delete(string $pattern, callable|array $handler, array $middlewares = []): void;
-        public function template(string $pattern, string $viewPath, array $middlewares = []): void;
+        public function view(string $pattern, string $viewPath, array $middlewares = []): void;
         public function dispatch(string $uri): void;
     }
 
     interface RouterGroupInterface extends RouterInterface {}
 
-    trait Router
+    abstract class AbstractRouter implements RouterInterface
     {
         private const CodeNotFound = 404;
         private const MethodNotAllowed = 405;
 
         private array $routes = [];
         private string $prefix = "";
+
+        public ?ViewDisplayInterface $view;
+
+        public function __construct(?ViewDisplayInterface $view)
+        {
+            $this->view = $view;
+        }
 
         private function addRoute(string $pattern, callable|array $handler, array $middlewares = []): void
         {
@@ -131,9 +161,9 @@ namespace PugKit\RouterCore {
                     $this->router->delete($pattern, $handler, $middlewares);
                 }
 
-                public function template(string $pattern, string $viewPath, array $middlewares = []): void
+                public function view(string $pattern, string $viewPath, array $middlewares = []): void
                 {
-                    $this->router->template($pattern, $viewPath, $middlewares);
+                    $this->router->view($pattern, $viewPath, $middlewares);
                 }
 
                 public function group(string $prefix, callable $callback): void
@@ -175,10 +205,10 @@ namespace PugKit\RouterCore {
             $this->addRoute($pattern, $handler, $middlewares);
         }
 
-        public function template(string $pattern, string $viewPath, array $middlewares = []): void
+        public function view(string $pattern, string $viewPath, array $middlewares = []): void
         {
             $this->addMethod(Method::Get);
-            $this->addRoute($pattern, fn() => $this->view($viewPath), $middlewares);
+            $this->addRoute($pattern, fn() => $this->view->view($viewPath, []), $middlewares);
         }
 
         public function dispatch(string $uri): void
@@ -241,10 +271,26 @@ namespace PugKit\RouterCore {
 
                 throw new Exception("404 Not Found", self::CodeNotFound);
             } catch (Exception $e) {
-                echo static::errors("404.php", $e)->render();
+                echo $this->view::errors("404.php", $e)->render();
                 exit;
             }
         }
+    }
+
+    class ServerRouter extends AbstractRouter
+    {
+        public function __construct(?ViewDisplayInterface $view)
+        {
+            parent::__construct($view);
+        }
+    }
+}
+
+namespace PugKit\Pattern\AppFactory {
+
+    readonly class Factory
+    {
+        public static function concreate(string|object $interface) {}
     }
 }
 
@@ -266,12 +312,12 @@ namespace PugKit\Web\Display {
 
     interface ViewDisplayInterface
     {
-        public static function view(string $viewPath, array $viewData): ViewDisplayInterface;
+        public static function view(string $viewPath, array $viewData = []): ViewDisplayInterface;
         public static function errors(string $errView, Exception $excep): ViewDisplayInterface;
         public function render(): string;
     }
 
-    trait View
+    abstract class AbstractView implements ViewDisplayInterface
     {
         private static string $viewPath;
         private static array $viewData;
@@ -285,7 +331,7 @@ namespace PugKit\Web\Display {
             self::$hasErr = "";
             self::$viewPath = $viewPath;
             self::$viewData = $viewData;
-            return new self;
+            return new static();
         }
 
         public static function errors(string $errView, Exception $excep): ViewDisplayInterface
@@ -295,7 +341,7 @@ namespace PugKit\Web\Display {
             self::$hasErr = "ERROR";
             self::$errView = $errView;
             self::$excep = $excep;
-            return new self;
+            return new static();
         }
 
         public function render(): string
@@ -328,6 +374,8 @@ namespace PugKit\Web\Display {
             return array_map(fn($value) => is_string($value) ? htmlspecialchars($value, ENT_QUOTES, "UTF-8") : $value, $data);
         }
     }
+
+    class View extends AbstractView {}
 }
 
 namespace PugKit\DI {
@@ -528,7 +576,25 @@ namespace PugKit\Helpers {
 
     use InvalidArgumentException;
     use PugKit\Http\Response\BackendEnums\Error;
+    use PugKit\Singleton\Application;
+    use PugKit\Singleton\ApplicationInterface;
     use stdClass;
+
+    if (!function_exists("app")) {
+
+        function app(): ApplicationInterface
+        {
+            return Application::concreate();
+        }
+    }
+
+    if (!function_exists("factory")) {
+
+        function factory()
+        {
+            return false;
+        }
+    }
 
     if (!function_exists("conv_toobj")) {
 

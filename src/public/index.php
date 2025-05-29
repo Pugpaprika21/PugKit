@@ -29,19 +29,22 @@ $app->bind(PDO::class, function () {
 });
 
 /** @var Application&RouterInterface $app */
-$app->get("/", [HomeController::class, "index"]);
 
-$app->template("/html", "/index.php");
+$router = $app->getServerRouter();
 
-$app->get("/user/{id}", function (RequestInterface $request) {
+$router->get("/", [HomeController::class, "index"]);
+
+$router->get("/user/{id}", function (RequestInterface $request) {
     $params = $request->params();
     return $params->id;
 });
 
-$app->group("/api/v1", function (RouterGroupInterface $group) {
+$router->group("/api/v1", function (RouterGroupInterface $group) {
     $group->get("/user/get/{userId}", [UserController::class, "getUser"]);
     $group->get("/user/getlist", [UserController::class, "getUsers"]);
 });
 
+$router->view("/html", "index.php");
+
 $route = filter_var($_GET["route"] ?? "/", FILTER_SANITIZE_URL);
-$app->dispatch($route);
+$router->dispatch($route);
