@@ -31,7 +31,7 @@ namespace PugKit\Singleton {
         private static ?ApplicationInterface $instance = null;
 
         private static ?RouterInterface $router = null;
-        
+
         private static ?ViewDisplayInterface $view = null;
 
         private function __construct(?RouterInterface $router, ?ViewDisplayInterface $view)
@@ -43,8 +43,8 @@ namespace PugKit\Singleton {
         public static function concreate(): ApplicationInterface
         {
             if (is_null(self::$instance)) {
-                $view = new View(); 
-                $router = new ServerRouter($view); 
+                $view = new View();
+                $router = new ServerRouter($view);
                 self::$instance = new self($router, $view);
             }
 
@@ -495,6 +495,8 @@ namespace PugKit\Http\Request {
     interface RequestInterface
     {
         public function only(array $keys): array;
+        public function parseBody(): ?object;
+        public function parseJSON(): ?object;
         public function setParams(array $params): void;
         public function params(): object;
     }
@@ -533,6 +535,21 @@ namespace PugKit\Http\Request {
 
             $data = self::$store[$method] ?? [];
             return array_intersect_key($data, array_flip($keys));
+        }
+
+        public function parseBody(): ?object
+        {
+            return $this->parse("POST");
+        }
+
+        public function parseJSON(): ?object
+        {
+            return $this->parse("JSON");
+        }
+
+        private function parse(string $key): ?object
+        {
+            return empty(self::$store[$key]) ? null : conv_toobj(self::$store[$key]);
         }
     }
 }
